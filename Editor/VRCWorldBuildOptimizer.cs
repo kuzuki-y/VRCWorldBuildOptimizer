@@ -1,4 +1,4 @@
-﻿// VRChat World Build Size Optimizer - Unity Editor Extension
+// VRChat World Build Size Optimizer - Unity Editor Extension
 using UnityEngine;
 using UnityEditor;
 using System;
@@ -40,7 +40,7 @@ namespace VRCWorldOptimizer
 
     public class VRCWorldBuildOptimizer : EditorWindow
     {
-        private const string VERSION = "ver0.6-beta";
+        private const string VERSION = "ver0.7-beta";
         private enum Lang { JA, EN }
         private Lang _lang = Lang.JA;
         private string T(string ja, string en) => _lang == Lang.JA ? ja : en;
@@ -67,6 +67,7 @@ namespace VRCWorldOptimizer
         private bool _texDisableRW      = true;
         // ★ プラットフォーム別も同時に書き換えるか
         private bool _texOverridePlatforms = true;
+        private bool _iosCompatible        = false; // ★ iOS版対応モード: iPhoneでアップロード不可なCrunch圧縮を除外
 
         private bool _meshDisableRW = true;
         private ModelImporterMeshCompression _meshCompression = ModelImporterMeshCompression.Low;
@@ -76,6 +77,7 @@ namespace VRCWorldOptimizer
         private float _audioQuality = 0.4f;
 
         private int _probeTargetRes = 256;
+        private string _searchTex="",_searchMesh="",_searchAudio="",_searchProbe="",_searchFont="",_searchUnused=""; // ファイル名検索
 
         private static readonly string BACKUP_ROOT = "ProjectSettings/VRCOptimizer/backups";
 
@@ -203,6 +205,11 @@ namespace VRCWorldOptimizer
         private void DrawSettings()
         {
             using(new GUILayout.VerticalScope(_sCard)){
+                GUILayout.Label(T("iOS対応","iOS"),_sBold);
+                _iosCompatible=GUILayout.Toggle(_iosCompatible,T(" iOS対応（iOS対応を行わない場合はこのチェックは不要です）"," iOS Support (no need to check this if you are not targeting iOS)"));
+                if(_iosCompatible)EditorGUILayout.HelpBox(T("iOS対応が有効です。Crunch圧縮（iPhoneビルド非対応）はスキップされ、既存のCrunch圧縮も適用時に解除されます。SDFフォントのCrunch圧縮もスキップされます。","iOS support ON: Crunch compression (unsupported on iPhone builds) is skipped and existing Crunch is removed on apply. SDF font Crunch is also skipped."),MessageType.Info);
+                else EditorGUILayout.HelpBox(T("iOS向けにアップロードする場合はONにしてください","Turn ON if you upload to iOS"),MessageType.None);
+                GUILayout.Space(8);
                 GUILayout.Label(T("テクスチャ","Texture"),_sBold);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(T("最大解像度","Max Size"),GUILayout.Width(70));
@@ -267,6 +274,16 @@ namespace VRCWorldOptimizer
         }
 
         // ===== テクスチャ =====
+                private string SearchBar(string val){
+            GUILayout.BeginHorizontal(EditorStyles.toolbar);
+            GUILayout.Label(T("ファイル名検索","Search by name"),GUILayout.Width(110));
+            var nv=GUILayout.TextField(val??"",GUILayout.MinWidth(180));
+            if(GUILayout.Button(T("クリア","Clear"),EditorStyles.toolbarButton,GUILayout.Width(54)))nv="";
+            GUILayout.EndHorizontal();GUILayout.Space(2);
+            return nv;
+        }
+        private static bool MatchName(string path,string q){return string.IsNullOrEmpty(q)||Path.GetFileName(path).IndexOf(q,System.StringComparison.OrdinalIgnoreCase)>=0;}
+        private static bool MatchPath(string path,string q){return string.IsNullOrEmpty(q)||path.IndexOf(q,System.StringComparison.OrdinalIgnoreCase)>=0;}
         private void DrawTextures()
         {
             Pad(()=>{
@@ -277,8 +294,9 @@ namespace VRCWorldOptimizer
                 if(GUILayout.Button(T("選択 ","Apply ")+n+T(" 件を適用"," selected"),_sPrim,GUILayout.Width(180)))
                     if(EditorUtility.DisplayDialog("確認",n+" 件のテクスチャを最適化します。\n（自動バックアップされます）","適用","キャンセル"))ApplyTextures();
                 GUI.enabled=true;GUILayout.EndHorizontal();GUILayout.Space(4);
-                using(new GUILayout.HorizontalScope(_sRow0)){GUILayout.Label("",GUILayout.Width(20));GUILayout.Label(T("使用中","Used"),GUILayout.Width(38));GUILayout.Label(T("テクスチャ名","Name"),GUILayout.Width(190));GUILayout.Label(T("サイズ","Size"),GUILayout.Width(75));GUILayout.Label(T("実解像度","Resolution"),GUILayout.Width(80));GUILayout.Label(T("最大設定","MaxSize"),GUILayout.Width(70));GUILayout.Label(T("PC上書","PC Ovr"),GUILayout.Width(60));GUILayout.Label(T("問題点","Issues"),GUILayout.MinWidth(150));GUILayout.Label(T("削減見込み","Savings"),GUILayout.Width(90));}
-                for(int i=0;i<_textures.Count;i++){var t=_textures[i];var iss=TexIssues(t);using(new GUILayout.HorizontalScope(i%2==0?_sRow0:_sRow1)){t.selected=GUILayout.Toggle(t.selected,"",GUILayout.Width(20));GUI.color=t.usedInScene?CG:CR;GUILayout.Label(t.usedInScene?"○":"×",new GUIStyle(EditorStyles.label){alignment=TextAnchor.MiddleCenter,fontStyle=FontStyle.Bold,normal=new GUIStyleState{textColor=t.usedInScene?CG:CR}},GUILayout.Width(38));GUI.color=Color.white;if(GUILayout.Button(Path.GetFileName(t.path),EditorStyles.label,GUILayout.Width(190)))Selection.activeObject=t.texture;GUILayout.Label(FS(t.sizeByte),GUILayout.Width(75));GUILayout.Label(t.width+"x"+t.height,GUILayout.Width(80));GUILayout.Label(t.format.ToString().Replace("AutomaticCompressed","Auto"),GUILayout.Width(70));var pcImp=AssetImporter.GetAtPath(t.path)as TextureImporter;var pcSet=pcImp?.GetPlatformTextureSettings("Standalone");GUI.color=(pcSet!=null&&pcSet.overridden&&pcSet.maxTextureSize>_texMaxSize)?CR:CG;GUILayout.Label(pcSet!=null&&pcSet.overridden?pcSet.maxTextureSize+"px":"—",GUILayout.Width(60));GUI.color=iss.Count>0?CY:CG;GUILayout.Label(iss.Count>0?string.Join(", ",iss):T("✓ 最適","✓ OK"),GUILayout.MinWidth(160));GUI.color=t.estimatedSaveByte>0?CG:Color.gray;GUILayout.Label(t.estimatedSaveByte>0?"-"+FS(t.estimatedSaveByte):"-",GUILayout.Width(90));GUI.color=Color.white;}}
+                                _searchTex=SearchBar(_searchTex);
+using(new GUILayout.HorizontalScope(_sRow0)){GUILayout.Label("",GUILayout.Width(20));GUILayout.Label(T("使用中","Used"),GUILayout.Width(38));GUILayout.Label(T("テクスチャ名","Name"),GUILayout.Width(190));GUILayout.Label(T("サイズ","Size"),GUILayout.Width(75));GUILayout.Label(T("実解像度","Resolution"),GUILayout.Width(80));GUILayout.Label(T("最大設定","MaxSize"),GUILayout.Width(70));GUILayout.Label(T("PC上書","PC Ovr"),GUILayout.Width(60));GUILayout.Label(T("問題点","Issues"),GUILayout.MinWidth(150));GUILayout.Label(T("削減見込み","Savings"),GUILayout.Width(90));}
+                for(int i=0;i<_textures.Count;i++){var t=_textures[i];if(!MatchName(t.path,_searchTex))continue;var iss=TexIssues(t);using(new GUILayout.HorizontalScope(i%2==0?_sRow0:_sRow1)){t.selected=GUILayout.Toggle(t.selected,"",GUILayout.Width(20));GUI.color=t.usedInScene?CG:CR;GUILayout.Label(t.usedInScene?"○":"×",new GUIStyle(EditorStyles.label){alignment=TextAnchor.MiddleCenter,fontStyle=FontStyle.Bold,normal=new GUIStyleState{textColor=t.usedInScene?CG:CR}},GUILayout.Width(38));GUI.color=Color.white;if(GUILayout.Button(Path.GetFileName(t.path),EditorStyles.label,GUILayout.Width(190)))Selection.activeObject=t.texture;GUILayout.Label(FS(t.sizeByte),GUILayout.Width(75));GUILayout.Label(t.width+"x"+t.height,GUILayout.Width(80));GUILayout.Label(t.format.ToString().Replace("AutomaticCompressed","Auto"),GUILayout.Width(70));var pcImp=AssetImporter.GetAtPath(t.path)as TextureImporter;var pcSet=pcImp?.GetPlatformTextureSettings("Standalone");GUI.color=(pcSet!=null&&pcSet.overridden&&pcSet.maxTextureSize>_texMaxSize)?CR:CG;GUILayout.Label(pcSet!=null&&pcSet.overridden?pcSet.maxTextureSize+"px":"—",GUILayout.Width(60));GUI.color=iss.Count>0?CY:CG;GUILayout.Label(iss.Count>0?string.Join(", ",iss):T("✓ 最適","✓ OK"),GUILayout.MinWidth(160));GUI.color=t.estimatedSaveByte>0?CG:Color.gray;GUILayout.Label(t.estimatedSaveByte>0?"-"+FS(t.estimatedSaveByte):"-",GUILayout.Width(90));GUI.color=Color.white;}}
             });
         }
 
@@ -307,8 +325,9 @@ namespace VRCWorldOptimizer
                 if(GUILayout.Button(T("選択 ","Apply ")+n+T(" 件を適用"," selected"),_sPrim,GUILayout.Width(180)))
                     if(EditorUtility.DisplayDialog("確認",n+" 件のメッシュを最適化します。\n（自動バックアップされます）","適用","キャンセル"))ApplyMeshes();
                 GUI.enabled=true;GUILayout.EndHorizontal();GUILayout.Space(4);
-                using(new GUILayout.HorizontalScope(_sRow0)){GUILayout.Label("",GUILayout.Width(20));GUILayout.Label(T("使用中","Used"),GUILayout.Width(38));GUILayout.Label(T("メッシュ名","Name"),GUILayout.Width(210));GUILayout.Label(T("サイズ","Size"),GUILayout.Width(75));GUILayout.Label(T("頂点数","Vertices"),GUILayout.Width(80));GUILayout.Label("BlendShape",GUILayout.Width(90));GUILayout.Label(T("圧縮","Compress"),GUILayout.Width(90));GUILayout.Label(T("問題点","Issues"),GUILayout.MinWidth(130));GUILayout.Label(T("削減見込み","Savings"),GUILayout.Width(90));}
-                for(int i=0;i<_meshes.Count;i++){var m=_meshes[i];var iss=new List<string>();if(m.isReadWrite)iss.Add(T("R/W有効","R/W On"));if(m.compression==ModelImporterMeshCompression.Off)iss.Add(T("圧縮なし","No Compress"));using(new GUILayout.HorizontalScope(i%2==0?_sRow0:_sRow1)){m.selected=GUILayout.Toggle(m.selected,"",GUILayout.Width(20));GUI.color=m.usedInScene?CG:CR;GUILayout.Label(m.usedInScene?"○":"×",new GUIStyle(EditorStyles.label){alignment=TextAnchor.MiddleCenter,fontStyle=FontStyle.Bold,normal=new GUIStyleState{textColor=m.usedInScene?CG:CR}},GUILayout.Width(38));GUI.color=Color.white;if(GUILayout.Button(Path.GetFileName(m.path),EditorStyles.label,GUILayout.Width(210)))Selection.activeObject=m.mesh;GUILayout.Label(FS(m.sizeByte),GUILayout.Width(75));GUILayout.Label(m.mesh!=null?m.mesh.vertexCount.ToString("N0"):"-",GUILayout.Width(80));GUILayout.Label(m.blendShapeCount.ToString(),GUILayout.Width(90));GUILayout.Label(m.compression.ToString(),GUILayout.Width(90));GUI.color=iss.Count>0?CY:CG;GUILayout.Label(iss.Count>0?string.Join(", ",iss):T("✓ 最適","✓ OK"),GUILayout.MinWidth(150));GUI.color=m.estimatedSaveByte>0?CG:Color.gray;GUILayout.Label(m.estimatedSaveByte>0?"-"+FS(m.estimatedSaveByte):"-",GUILayout.Width(90));GUI.color=Color.white;}}
+                                _searchMesh=SearchBar(_searchMesh);
+using(new GUILayout.HorizontalScope(_sRow0)){GUILayout.Label("",GUILayout.Width(20));GUILayout.Label(T("使用中","Used"),GUILayout.Width(38));GUILayout.Label(T("メッシュ名","Name"),GUILayout.Width(210));GUILayout.Label(T("サイズ","Size"),GUILayout.Width(75));GUILayout.Label(T("頂点数","Vertices"),GUILayout.Width(80));GUILayout.Label("BlendShape",GUILayout.Width(90));GUILayout.Label(T("圧縮","Compress"),GUILayout.Width(90));GUILayout.Label(T("問題点","Issues"),GUILayout.MinWidth(130));GUILayout.Label(T("削減見込み","Savings"),GUILayout.Width(90));}
+                for(int i=0;i<_meshes.Count;i++){var m=_meshes[i];if(!MatchName(m.path,_searchMesh))continue;var iss=new List<string>();if(m.isReadWrite)iss.Add(T("R/W有効","R/W On"));if(m.compression==ModelImporterMeshCompression.Off)iss.Add(T("圧縮なし","No Compress"));using(new GUILayout.HorizontalScope(i%2==0?_sRow0:_sRow1)){m.selected=GUILayout.Toggle(m.selected,"",GUILayout.Width(20));GUI.color=m.usedInScene?CG:CR;GUILayout.Label(m.usedInScene?"○":"×",new GUIStyle(EditorStyles.label){alignment=TextAnchor.MiddleCenter,fontStyle=FontStyle.Bold,normal=new GUIStyleState{textColor=m.usedInScene?CG:CR}},GUILayout.Width(38));GUI.color=Color.white;if(GUILayout.Button(Path.GetFileName(m.path),EditorStyles.label,GUILayout.Width(210)))Selection.activeObject=m.mesh;GUILayout.Label(FS(m.sizeByte),GUILayout.Width(75));GUILayout.Label(m.mesh!=null?m.mesh.vertexCount.ToString("N0"):"-",GUILayout.Width(80));GUILayout.Label(m.blendShapeCount.ToString(),GUILayout.Width(90));GUILayout.Label(m.compression.ToString(),GUILayout.Width(90));GUI.color=iss.Count>0?CY:CG;GUILayout.Label(iss.Count>0?string.Join(", ",iss):T("✓ 最適","✓ OK"),GUILayout.MinWidth(150));GUI.color=m.estimatedSaveByte>0?CG:Color.gray;GUILayout.Label(m.estimatedSaveByte>0?"-"+FS(m.estimatedSaveByte):"-",GUILayout.Width(90));GUI.color=Color.white;}}
             });
         }
 
@@ -323,8 +342,9 @@ namespace VRCWorldOptimizer
                 if(GUILayout.Button(T("選択 ","Apply ")+n+T(" 件を適用"," selected"),_sPrim,GUILayout.Width(180)))
                     if(EditorUtility.DisplayDialog("確認",n+" 件のオーディオを最適化します。\n（自動バックアップされます）","適用","キャンセル"))ApplyAudios();
                 GUI.enabled=true;GUILayout.EndHorizontal();GUILayout.Space(4);
-                using(new GUILayout.HorizontalScope(_sRow0)){GUILayout.Label("",GUILayout.Width(20));GUILayout.Label(T("使用中","Used"),GUILayout.Width(38));GUILayout.Label(T("クリップ名","Name"),GUILayout.Width(200));GUILayout.Label(T("サイズ","Size"),GUILayout.Width(75));GUILayout.Label(T("圧縮形式","Format"),GUILayout.Width(120));GUILayout.Label(T("ロード方式","Load Type"),GUILayout.Width(150));GUILayout.Label(T("問題点","Issues"),GUILayout.MinWidth(120));GUILayout.Label(T("削減見込み","Savings"),GUILayout.Width(90));}
-                for(int i=0;i<_audios.Count;i++){var a=_audios[i];var iss=new List<string>();if(a.format==AudioCompressionFormat.PCM)iss.Add(T("非圧縮PCM","Uncompressed"));if(a.loadType==AudioClipLoadType.DecompressOnLoad)iss.Add(T("展開ロード","Decompress"));using(new GUILayout.HorizontalScope(i%2==0?_sRow0:_sRow1)){a.selected=GUILayout.Toggle(a.selected,"",GUILayout.Width(20));GUI.color=a.usedInScene?CG:CR;GUILayout.Label(a.usedInScene?"○":"×",new GUIStyle(EditorStyles.label){alignment=TextAnchor.MiddleCenter,fontStyle=FontStyle.Bold,normal=new GUIStyleState{textColor=a.usedInScene?CG:CR}},GUILayout.Width(38));GUI.color=Color.white;if(GUILayout.Button(Path.GetFileName(a.path),EditorStyles.label,GUILayout.Width(200)))Selection.activeObject=a.clip;GUILayout.Label(FS(a.sizeByte),GUILayout.Width(75));GUILayout.Label(a.format.ToString(),GUILayout.Width(120));GUILayout.Label(a.loadType.ToString(),GUILayout.Width(160));GUI.color=iss.Count>0?CY:CG;GUILayout.Label(iss.Count>0?string.Join(", ",iss):T("✓ 最適","✓ OK"),GUILayout.MinWidth(130));GUI.color=a.estimatedSaveByte>0?CG:Color.gray;GUILayout.Label(a.estimatedSaveByte>0?"-"+FS(a.estimatedSaveByte):"-",GUILayout.Width(90));GUI.color=Color.white;}}
+                                _searchAudio=SearchBar(_searchAudio);
+using(new GUILayout.HorizontalScope(_sRow0)){GUILayout.Label("",GUILayout.Width(20));GUILayout.Label(T("使用中","Used"),GUILayout.Width(38));GUILayout.Label(T("クリップ名","Name"),GUILayout.Width(200));GUILayout.Label(T("サイズ","Size"),GUILayout.Width(75));GUILayout.Label(T("圧縮形式","Format"),GUILayout.Width(120));GUILayout.Label(T("ロード方式","Load Type"),GUILayout.Width(150));GUILayout.Label(T("問題点","Issues"),GUILayout.MinWidth(120));GUILayout.Label(T("削減見込み","Savings"),GUILayout.Width(90));}
+                for(int i=0;i<_audios.Count;i++){var a=_audios[i];if(!MatchName(a.path,_searchAudio))continue;var iss=new List<string>();if(a.format==AudioCompressionFormat.PCM)iss.Add(T("非圧縮PCM","Uncompressed"));if(a.loadType==AudioClipLoadType.DecompressOnLoad)iss.Add(T("展開ロード","Decompress"));using(new GUILayout.HorizontalScope(i%2==0?_sRow0:_sRow1)){a.selected=GUILayout.Toggle(a.selected,"",GUILayout.Width(20));GUI.color=a.usedInScene?CG:CR;GUILayout.Label(a.usedInScene?"○":"×",new GUIStyle(EditorStyles.label){alignment=TextAnchor.MiddleCenter,fontStyle=FontStyle.Bold,normal=new GUIStyleState{textColor=a.usedInScene?CG:CR}},GUILayout.Width(38));GUI.color=Color.white;if(GUILayout.Button(Path.GetFileName(a.path),EditorStyles.label,GUILayout.Width(200)))Selection.activeObject=a.clip;GUILayout.Label(FS(a.sizeByte),GUILayout.Width(75));GUILayout.Label(a.format.ToString(),GUILayout.Width(120));GUILayout.Label(a.loadType.ToString(),GUILayout.Width(160));GUI.color=iss.Count>0?CY:CG;GUILayout.Label(iss.Count>0?string.Join(", ",iss):T("✓ 最適","✓ OK"),GUILayout.MinWidth(130));GUI.color=a.estimatedSaveByte>0?CG:Color.gray;GUILayout.Label(a.estimatedSaveByte>0?"-"+FS(a.estimatedSaveByte):"-",GUILayout.Width(90));GUI.color=Color.white;}}
             });
         }
 
@@ -341,8 +361,9 @@ namespace VRCWorldOptimizer
                 if(GUILayout.Button("選択 "+n+" 件を適用 (目標解像度: "+_probeTargetRes+"px)",_sPrim,GUILayout.Width(300)))
                     if(EditorUtility.DisplayDialog("確認",n+" 件のReflectionProbeを最大"+_probeTargetRes+"pxに削減します。\n（自動バックアップされます）\n適用後は見た目を必ず確認してください。","適用","キャンセル"))ApplyReflProbes();
                 GUI.enabled=true;GUILayout.EndHorizontal();GUILayout.Space(4);
-                using(new GUILayout.HorizontalScope(_sRow0)){GUILayout.Label("",GUILayout.Width(20));GUILayout.Label(T("ファイル名","File"),GUILayout.Width(280));GUILayout.Label("サイズ",GUILayout.Width(80));GUILayout.Label(T("現在解像度","Current"),GUILayout.Width(90));GUILayout.Label(T("目標解像度","Target"),GUILayout.Width(90));GUILayout.Label(T("削減見込み","Savings"),GUILayout.Width(90));}
-                for(int i=0;i<_refProbes.Count;i++){var p=_refProbes[i];using(new GUILayout.HorizontalScope(i%2==0?_sRow0:_sRow1)){p.selected=GUILayout.Toggle(p.selected,"",GUILayout.Width(20));GUILayout.Label(Path.GetFileName(p.path),GUILayout.Width(280));GUILayout.Label(FS(p.sizeByte),GUILayout.Width(80));GUI.color=p.currentRes>_probeTargetRes?CY:CG;GUILayout.Label(p.currentRes+"px",GUILayout.Width(90));GUILayout.Label(_probeTargetRes+"px",GUILayout.Width(90));GUI.color=p.estimatedSaveByte>0?CG:Color.gray;GUILayout.Label(p.estimatedSaveByte>0?"-"+FS(p.estimatedSaveByte):"-",GUILayout.Width(90));GUI.color=Color.white;}}
+                                _searchProbe=SearchBar(_searchProbe);
+using(new GUILayout.HorizontalScope(_sRow0)){GUILayout.Label("",GUILayout.Width(20));GUILayout.Label(T("ファイル名","File"),GUILayout.Width(280));GUILayout.Label("サイズ",GUILayout.Width(80));GUILayout.Label(T("現在解像度","Current"),GUILayout.Width(90));GUILayout.Label(T("目標解像度","Target"),GUILayout.Width(90));GUILayout.Label(T("削減見込み","Savings"),GUILayout.Width(90));}
+                for(int i=0;i<_refProbes.Count;i++){var p=_refProbes[i];if(!MatchName(p.path,_searchProbe))continue;using(new GUILayout.HorizontalScope(i%2==0?_sRow0:_sRow1)){p.selected=GUILayout.Toggle(p.selected,"",GUILayout.Width(20));GUILayout.Label(Path.GetFileName(p.path),GUILayout.Width(280));GUILayout.Label(FS(p.sizeByte),GUILayout.Width(80));GUI.color=p.currentRes>_probeTargetRes?CY:CG;GUILayout.Label(p.currentRes+"px",GUILayout.Width(90));GUILayout.Label(_probeTargetRes+"px",GUILayout.Width(90));GUI.color=p.estimatedSaveByte>0?CG:Color.gray;GUILayout.Label(p.estimatedSaveByte>0?"-"+FS(p.estimatedSaveByte):"-",GUILayout.Width(90));GUI.color=Color.white;}}
             });
         }
 
@@ -362,8 +383,9 @@ namespace VRCWorldOptimizer
                 if(GUILayout.Button(T("選択 ","Apply ")+n+T(" 件を適用"," selected"),_sPrim,GUILayout.Width(180)))
                     if(EditorUtility.DisplayDialog("確認",n+" 件のフォントを最適化します。\n（自動バックアップされます）","適用","キャンセル"))ApplyFonts();
                 GUI.enabled=true;GUILayout.EndHorizontal();GUILayout.Space(4);
-                using(new GUILayout.HorizontalScope(_sRow0)){GUILayout.Label("",GUILayout.Width(20));GUILayout.Label(T("ファイル名","File"),GUILayout.Width(300));GUILayout.Label("サイズ",GUILayout.Width(80));GUILayout.Label(T("種別","Type"),GUILayout.Width(55));GUILayout.Label(T("現状","Status"),GUILayout.Width(110));GUILayout.Label(T("問題点","Issues"),GUILayout.MinWidth(170));GUILayout.Label(T("削減見込み","Savings"),GUILayout.Width(90));}
-                for(int i=0;i<_fonts.Count;i++){var f=_fonts[i];using(new GUILayout.HorizontalScope(i%2==0?_sRow0:_sRow1)){f.selected=GUILayout.Toggle(f.selected,"",GUILayout.Width(20));GUILayout.Label(Path.GetFileName(f.path),GUILayout.Width(300));GUILayout.Label(FS(f.sizeByte),GUILayout.Width(80));GUILayout.Label(f.fontType,GUILayout.Width(55));GUI.color=Color.gray;if(f.fontType=="TTF")GUILayout.Label(f.includeFontData?T("データあり","Embedded"):T("データなし","Excluded"),GUILayout.Width(110));else GUILayout.Label(f.atlasWidth+"x"+f.atlasHeight+"px",GUILayout.Width(110));GUI.color=f.estimatedSaveByte>0?CY:CG;GUILayout.Label(!string.IsNullOrEmpty(f.issue)?f.issue:T("✓ 最適","✓ OK"),GUILayout.MinWidth(170));GUI.color=f.estimatedSaveByte>0?CG:Color.gray;GUILayout.Label(f.estimatedSaveByte>0?"-"+FS(f.estimatedSaveByte):"-",GUILayout.Width(90));GUI.color=Color.white;}}
+                                _searchFont=SearchBar(_searchFont);
+using(new GUILayout.HorizontalScope(_sRow0)){GUILayout.Label("",GUILayout.Width(20));GUILayout.Label(T("ファイル名","File"),GUILayout.Width(300));GUILayout.Label("サイズ",GUILayout.Width(80));GUILayout.Label(T("種別","Type"),GUILayout.Width(55));GUILayout.Label(T("現状","Status"),GUILayout.Width(110));GUILayout.Label(T("問題点","Issues"),GUILayout.MinWidth(170));GUILayout.Label(T("削減見込み","Savings"),GUILayout.Width(90));}
+                for(int i=0;i<_fonts.Count;i++){var f=_fonts[i];if(!MatchName(f.path,_searchFont))continue;using(new GUILayout.HorizontalScope(i%2==0?_sRow0:_sRow1)){f.selected=GUILayout.Toggle(f.selected,"",GUILayout.Width(20));GUILayout.Label(Path.GetFileName(f.path),GUILayout.Width(300));GUILayout.Label(FS(f.sizeByte),GUILayout.Width(80));GUILayout.Label(f.fontType,GUILayout.Width(55));GUI.color=Color.gray;if(f.fontType=="TTF")GUILayout.Label(f.includeFontData?T("データあり","Embedded"):T("データなし","Excluded"),GUILayout.Width(110));else GUILayout.Label(f.atlasWidth+"x"+f.atlasHeight+"px",GUILayout.Width(110));GUI.color=f.estimatedSaveByte>0?CY:CG;GUILayout.Label(!string.IsNullOrEmpty(f.issue)?f.issue:T("✓ 最適","✓ OK"),GUILayout.MinWidth(170));GUI.color=f.estimatedSaveByte>0?CG:Color.gray;GUILayout.Label(f.estimatedSaveByte>0?"-"+FS(f.estimatedSaveByte):"-",GUILayout.Width(90));GUI.color=Color.white;}}
             });
         }
 
@@ -382,8 +404,9 @@ namespace VRCWorldOptimizer
                 if(GUILayout.Button(T("選択 ","Delete ")+n+T(" 件を削除 ("," files (")+FS(sz)+")",_sDanger,GUILayout.Width(280)))
                     if(EditorUtility.DisplayDialog("警告",n+" 件のアセットを削除します。\n合計: "+FS(sz)+"\n\n削除前にバックアップが自動作成されます。","削除する","キャンセル"))DeleteUnused();
                 GUI.enabled=true;GUILayout.EndHorizontal();GUILayout.Space(4);
-                using(new GUILayout.HorizontalScope(_sRow0)){GUILayout.Label("",GUILayout.Width(20));GUILayout.Label(T("パス","Path"),GUILayout.MinWidth(380));GUILayout.Label(T("種別","Type"),GUILayout.Width(90));GUILayout.Label(T("サイズ","Size"),GUILayout.Width(90));}
-                for(int i=0;i<_unused.Count;i++){var u=_unused[i];using(new GUILayout.HorizontalScope(i%2==0?_sRow0:_sRow1)){u.selected=GUILayout.Toggle(u.selected,"",GUILayout.Width(20));GUILayout.Label(u.path,GUILayout.MinWidth(380));GUI.color=CY;GUILayout.Label(u.assetType,GUILayout.Width(90));GUI.color=Color.white;GUILayout.Label(FS(u.sizeByte),GUILayout.Width(90));}}
+                                _searchUnused=SearchBar(_searchUnused);
+using(new GUILayout.HorizontalScope(_sRow0)){GUILayout.Label("",GUILayout.Width(20));GUILayout.Label(T("パス","Path"),GUILayout.MinWidth(380));GUILayout.Label(T("種別","Type"),GUILayout.Width(90));GUILayout.Label(T("サイズ","Size"),GUILayout.Width(90));}
+                for(int i=0;i<_unused.Count;i++){var u=_unused[i];if(!MatchPath(u.path,_searchUnused))continue;using(new GUILayout.HorizontalScope(i%2==0?_sRow0:_sRow1)){u.selected=GUILayout.Toggle(u.selected,"",GUILayout.Width(20));GUILayout.Label(u.path,GUILayout.MinWidth(380));GUI.color=CY;GUILayout.Label(u.assetType,GUILayout.Width(90));GUI.color=Color.white;GUILayout.Label(FS(u.sizeByte),GUILayout.Width(90));}}
             });
         }
 
@@ -552,7 +575,7 @@ namespace VRCWorldOptimizer
                     }
                 }
                 if(_texDisableRW&&imp.isReadable){imp.isReadable=false;ch=true;}
-                if(_texEnableCrunch&&!imp.crunchedCompression){imp.crunchedCompression=true;imp.compressionQuality=_texCrunchQuality;ch=true;}
+                if(_iosCompatible){if(imp.crunchedCompression){imp.crunchedCompression=false;ch=true;}}else if(_texEnableCrunch&&!imp.crunchedCompression){imp.crunchedCompression=true;imp.compressionQuality=_texCrunchQuality;ch=true;}
                 if(_texMipmapStream&&imp.mipmapEnabled&&!imp.streamingMipmaps){imp.streamingMipmaps=true;ch=true;}
                 if(ch)imp.SaveAndReimport();
             }
@@ -625,7 +648,7 @@ namespace VRCWorldOptimizer
                 if(f.fontType=="TTF"){
                     var imp=AssetImporter.GetAtPath(f.path)as TrueTypeFontImporter;
                     if(imp!=null&&imp.includeFontData){imp.includeFontData=false;imp.SaveAndReimport();done++;}
-                }else if(f.fontType=="SDF"){
+                }else if(f.fontType=="SDF"){if(_iosCompatible)continue; // iOS版対応: SDFアトラスのCrunch圧縮(iPhone非対応)をスキップ 
                     // ★ アトラステクスチャを Crunch 圧縮（文字データは保持）
                     // 本体バックアップ（失敗時に確実に戻せるよう必須）
                     string _pRoot=Application.dataPath.Replace("/Assets","");
@@ -711,7 +734,7 @@ namespace VRCWorldOptimizer
                 if(imp2.maxTextureSize>_texMaxSize){imp2.maxTextureSize=_texMaxSize;ch2=true;}
                 if(_texOverridePlatforms){foreach(var pl in new[]{"Standalone","Android","iPhone"}){var ps2=imp2.GetPlatformTextureSettings(pl);if(ps2.overridden&&ps2.maxTextureSize>_texMaxSize){ps2.maxTextureSize=_texMaxSize;imp2.SetPlatformTextureSettings(ps2);ch2=true;}}}
                 if(_texDisableRW&&imp2.isReadable){imp2.isReadable=false;ch2=true;}
-                if(_texEnableCrunch&&!imp2.crunchedCompression){imp2.crunchedCompression=true;imp2.compressionQuality=_texCrunchQuality;ch2=true;}
+                if(_iosCompatible){if(imp2.crunchedCompression){imp2.crunchedCompression=false;ch2=true;}}else if(_texEnableCrunch&&!imp2.crunchedCompression){imp2.crunchedCompression=true;imp2.compressionQuality=_texCrunchQuality;ch2=true;}
                 if(_texMipmapStream&&imp2.mipmapEnabled&&!imp2.streamingMipmaps){imp2.streamingMipmaps=true;ch2=true;}
                 if(ch2)imp2.SaveAndReimport();
             }
