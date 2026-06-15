@@ -40,7 +40,7 @@ namespace VRCWorldOptimizer
 
     public class VRCWorldBuildOptimizer : EditorWindow
     {
-        private const string VERSION = "ver0.7-beta";
+        private const string VERSION = "ver0.75-beta";
         private enum Lang { JA, EN }
         private Lang _lang = Lang.JA;
         private string T(string ja, string en) => _lang == Lang.JA ? ja : en;
@@ -774,7 +774,7 @@ using(new GUILayout.HorizontalScope(_sRow0)){GUILayout.Label("",GUILayout.Width(
                 if(fx.fontType=="TTF"){
                     var imp2=AssetImporter.GetAtPath(fx.path)as TrueTypeFontImporter;
                     if(imp2!=null&&imp2.includeFontData){imp2.includeFontData=false;imp2.SaveAndReimport();}
-                }else if(fx.fontType=="SDF"){
+                }else if(fx.fontType=="SDF"){if(_iosCompatible)continue; // iOS対応: SDFアトラスのCrunch圧縮(iPhone非対応)をスキップ 
                     // 本体バックアップ
                     string _sf=Path.Combine(_pr,fx.path);if(!File.Exists(_sf))continue;
                     string _rp2=fx.path.StartsWith("Assets/")?fx.path.Substring(7):fx.path.Replace("Assets\\","");
